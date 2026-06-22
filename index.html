@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Duelo Espacial - Supervivencia Invasión</title>
+    <style>
+        :root { --bg: #06060f; }
+        * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; touch-action:manipulation; }
+        body { background:var(--bg); display:flex; align-items:center; justify-content:center; height:100vh; height:100dvh; width:100vw; width:100dvw; overflow:hidden; font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif; position:fixed; top:0; left:0; }
+        #gameContainer { position:relative; width:100vw; width:100dvw; height:100vh; height:100dvh; display:flex; align-items:center; justify-content:center; background:radial-gradient(ellipse at center, #0d0d2b 0%, #06060f 70%); }
+        canvas { display:block; position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; }
+        #uiOverlay { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:5; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+        .menu-panel { pointer-events:auto; background:rgba(10,10,30,0.92); backdrop-filter:blur(15px); -webkit-backdrop-filter:blur(15px); border:1px solid rgba(255,255,255,0.15); border-radius:24px; padding:24px 20px; display:flex; flex-direction:column; align-items:center; gap:14px; color:#fff; text-align:center; max-width:380px; width:90%; box-shadow:0 20px 50px rgba(0,0,0,0.6); }
+        .menu-panel h2 { font-size:1.8rem; font-weight:700; letter-spacing:1px; background:linear-gradient(135deg,#00d4ff,#a855f7); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+        .menu-panel h3 { font-size:1.1rem; color:#aaa; }
+        .btn { pointer-events:auto; padding:12px 28px; border-radius:50px; border:none; font-weight:700; font-size:0.95rem; letter-spacing:0.8px; cursor:pointer; color:#fff; background:linear-gradient(135deg,#1e3a5f,#0f172a); box-shadow:0 4px 15px rgba(0,150,255,0.2); transition:all 0.2s; width:100%; max-width:250px; text-transform:uppercase; }
+        .btn:active { transform:scale(0.96); box-shadow:0 2px 8px rgba(0,150,255,0.5); }
+        .btn.primary { background:linear-gradient(135deg,#00a6ff,#6d28d9); box-shadow:0 4px 20px rgba(0,166,255,0.4); }
+        .btn.survival { background:linear-gradient(135deg,#e11d48,#b45309); box-shadow:0 4px 20px rgba(225,29,72,0.4); }
+        .btn.small { padding:8px 18px; font-size:0.8rem; max-width:140px; }
+        .btn:disabled { opacity:0.4; pointer-events:none; }
+        .ship-select { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; width:100%; }
+        .ship-card { background:rgba(255,255,255,0.06); border:2px solid rgba(255,255,255,0.1); border-radius:16px; padding:12px 8px; width:80px; text-align:center; cursor:pointer; transition:all 0.2s; display:flex; flex-direction:column; align-items:center; gap:4px; }
+        .ship-card.selected { border-color:#00d4ff; box-shadow:0 0 15px rgba(0,212,255,0.5); background:rgba(0,212,255,0.15); }
+        .ship-card.locked { opacity:0.5; cursor:not-allowed; border-style:dashed; }
+        .ship-preview { width:40px; height:32px; border-radius:6px; }
+        .currency-display { font-size:1.2rem; font-weight:700; color:#ffd700; display:flex; align-items:center; gap:6px; }
+        #rotateMessage { display:none; position:absolute; z-index:10; text-align:center; color:#ffffffcc; pointer-events:none; flex-direction:column; align-items:center; gap:20px; }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="uiOverlay"></div>
+        <div id="rotateMessage"><div style="font-size:60px;">📱</div><div style="font-size:18px;font-weight:600;">Gira tu dispositivo</div><div style="font-size:13px;opacity:0.6;">Modo horizontal para jugar</div></div>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const container = document.getElementById('gameContainer');
+            const uiOverlay = document.getElementById('uiOverlay');
+            const rotateMsg = document.getElementById('rotateMessage');
+
+            // ────────────────────────────────────────
+            // CONFIGURACIÓN DE NAVES (TIENDA)
+            // ────────────────────────────────────────
+            const SHIP_DEFS = {
+                basic: { id:'basic', name:'Cazador', color:'#00d4ff', glow:'#00e5ff', speed:1.0, fireRate:450, projectiles:1, price:0, desc:'Equilibrado' },
+                rapid: { id:'rapid', name:'Veloz', color:'#a855f7', glow:'#c084fc', speed:1.4, fireRate:280, projectiles:1, price:300, desc:'Rápido y ágil' },
+                tank: { id:'tank', name:'Tanque', color:'#f97316', glow:'#fb923c', speed:0.65, fireRate:700, projectiles:3, price:500, desc:'Triple disparo' },
+                sniper: { id:'sniper', name:'Francotirador', color:'#e11d48', glow:'#f43f5e', speed:0.85, fireRate:900, projectiles:1, price:400, desc:'Proyectil potente' },
+                shield: { id:'shield', name:'Escudado', color:'#22c55e', glow:'#4ade80', speed:0.9, fireRate:500, projectiles:1, price:600, desc:'Escudo innato' }
+            };
+
+            // ────────────────────────────────────────
+            // ESTADO GLOBAL
+            // ────────────────────────────────────────
+            let gameState = 'menu';
+            let gameMode = 'pvp'; // 'pvp' o 'survival'
+            let isLandscape = true;
+            let canvasW, canvasH;
+            let player1, player2;
+            let projectiles = [];
+            let enemyProjectiles = [];
+            let particles = [];
+            let powerUps = [];
+            let obstacles = [];
+            let enemies = [];
+            let stars = [];
+            let floatingTexts = [];
+            let cinematicFlash = 0;
+            let powerUpTimer = 0;
+            let obstacleTimer = 0;
+            let winnerPlayer = null;
+            let gameOverTimer = 0;
+            let shakeAmount = 0; let cameraZoom = 1;
+            let activeTouches = {};
+            let currencyP1 = 0, currencyP2 = 0;
+            let equippedShipP1 = 'basic', equippedShipP2 = 'basic';
+            let unlockedShipsP1 = new Set(['basic']), unlockedShipsP2 = new Set(['basic']);
+
+            // Variables específicas del modo supervivencia
+            let survivalWave = 1;
+            let survivalScore = 0;
+            let enemiesToSpawn = 0;
+            let waveSpawnTimer = 0;
+            let bossSpawned = false;
+
+            // ────────────────────────────────────────
+            // AUDIO
+            // ────────────────────────────────────────
+            let audioCtx = null;
+            function initAudio() { if(!audioCtx) { try { audioCtx = new (window.AudioContext||window.webkitAudioContext)(); } catch(e) { audioCtx=null; } } if(audioCtx && audioCtx.state==='suspended') audioCtx.resume(); }
+            function playSound(f,t,d,v=0.06,g=null) { if(!audioCtx) return; try { const n=audioCtx.currentTime; const o=audioCtx.createOscillator(); const gn=audioCtx.createGain(); o.type=t; o.frequency.setValueAtTime(f,n); if(g) o.frequency.linearRampToValueAtTime(g,n+d); gn.gain.setValueAtTime(v,n); gn.gain.exponentialRampToValueAtTime(0.001,n+d); o.connect(gn); gn.connect(audioCtx.destination); o.start(n); o.stop(n+d); } catch(e) {} }
+            function sfxShoot() { playSound(800,'square',0.07,0.04,400); }
+            function sfxHit() { playSound(55,'sawtooth',0.12,0.08,25); playSound(180,'triangle',0.05,0.05); }
+            function sfxPowerUp() { playSound(500,'sine',0.08,0.15,1200); playSound(700,'sine',0.06,0.12,1400); }
+            function sfxWin() { playSound(523,'square',0.08,0.08); setTimeout(()=>playSound(659,'square',0.08,0.08),100); setTimeout(()=>playSound(784,'square',0.1,0.15),200); }
+            function sfxBuy() { playSound(600,'sine',0.06,0.1,900); }
+            function vibrate(p) { if(navigator.vibrate) try{navigator.vibrate(p);}catch(e){} }
+
+            // ────────────────────────────────────────
+            // PERSISTENCIA
+            // ────────────────────────────────────────
+            function saveData() { try { localStorage.setItem('spaceDuelDataV2', JSON.stringify({ currencyP1,currencyP2,equippedShipP1,equippedShipP2,unlockedP1:Array.from(unlockedShipsP1),unlockedP2:Array.from(unlockedShipsP2) })); } catch(e) {} }
+            function loadData() { try { const r=localStorage.getItem('spaceDuelDataV2'); if(r) { const d=JSON.parse(r); currencyP1=d.currencyP1||0; currencyP2=d.currencyP2||0; equippedShipP1=d.equippedShipP1||'basic'; equippedShipP2=d.equippedShipP2||'basic'; unlockedShipsP1=new Set(d.unlockedP1||['basic']); unlockedShipsP2=new Set(d.unlockedP2||['basic']); } } catch(e) {} }
+
+            // ────────────────────────────────────────
+            // CLASES
+            // ────────────────────────────────────────
+            class FloatingText {
+                constructor(x,y,text,color,life=1.2) { this.x=x; this.y=y; this.text=text; this.color=color; this.life=life; this.maxLife=life; }
+                update(dt) { this.life-=dt; this.y-=40*dt; }
+                get alive() { return this.life>0; }
+                draw(ctx) { const a=this.life/this.maxLife; ctx.font='bold 18px "Segoe UI",sans-serif'; ctx.textAlign='center'; ctx.fillStyle=this.color.replace('1)',`${a})`).replace('rgb','rgba'); ctx.shadowBlur=10; ctx.shadowColor=this.color; ctx.fillText(this.text,this.x,this.y); ctx.shadowBlur=0; }
+            }
+
+            class Player {
+                constructor(id,x,y,shipDef) {
+                    this.id=id; this.x=x; this.y=y; this.baseX=x; this.baseY=y; this.shipDef=shipDef;
+                    this.width=44; this.height=34; this.color=shipDef.color; this.glowColor=shipDef.glow;
+                    this.score=0; this.shootCooldown=0; this.alive=true; this.hitFlash=0;
+                    this.shieldActive=(shipDef.id==='shield'); this.shieldHitsLeft=shipDef.id==='shield'?1:0;
+                    this.targetY=y; this.targetX=x; this.isTouching=false;
+                    this.buffTimer=0; this.buffType=null;
+                    this.tempFireRate=null; this.tempProjectiles=null;
+                    this.collectFlash=0;
+                    this.lives = 3; // Específico de supervivencia
+                }
+                reset() {
+                    this.x=this.baseX; this.y=this.baseY; this.targetX=this.baseX; this.targetY=this.baseY;
+                    this.score=0; this.shootCooldown=0; this.alive=true; this.hitFlash=0;
+                    const def = SHIP_DEFS[this.id===1?equippedShipP1:equippedShipP2] || SHIP_DEFS['basic'];
+                    this.shipDef=def; this.color=def.color; this.glowColor=def.glow;
+                    this.shieldActive=(def.id==='shield'); this.shieldHitsLeft=def.id==='shield'?1:0;
+                    this.isTouching=false; this.buffTimer=0; this.buffType=null;
+                    this.tempFireRate=null; this.tempProjectiles=null; this.collectFlash=0;
+                    this.lives = 3;
+                }
+                getShootCooldown() { return this.tempFireRate ?? this.shipDef.fireRate; }
+                getProjectileCount() { return this.tempProjectiles ?? this.shipDef.projectiles; }
+                getSpeed() { return this.shipDef.speed; }
+
+                applyBuff(type) {
+                    this.buffType=type; this.buffTimer=6; this.collectFlash=0.4;
+                    if(type==='rapid') { this.tempFireRate=150; this.tempProjectiles=null; }
+                    else if(type==='triple') { this.tempProjectiles=3; this.tempFireRate=null; }
+                    else if(type==='shield') { this.shieldActive=true; this.shieldHitsLeft=2; this.tempFireRate=null; this.tempProjectiles=null; }
+                }
+                clearBuff() {
+                    this.buffTimer=0; this.buffType=null;
+                    this.tempFireRate=null; this.tempProjectiles=null;
+                }
+                updateBuff(dt) {
+                    if(this.buffTimer>0) { this.buffTimer-=dt; if(this.buffTimer<=0) this.clearBuff(); }
+                    if(this.collectFlash>0) this.collectFlash-=dt;
+                }
+                handleHit() {
+                    if(this.shieldActive && this.shieldHitsLeft>0) { this.shieldHitsLeft--; if(this.shieldHitsLeft<=0) this.shieldActive=false; return false; }
+                    this.hitFlash=0.25; return true;
+                }
+                draw(ctx,isLandscape) {
+                    ctx.save();
+                    const flash = this.hitFlash>0?Math.sin(this.hitFlash*40)*0.6:0;
+                    const cflash = this.collectFlash>0?Math.sin(this.collectFlash*20)*0.5:0;
+                    const alpha = 1-Math.max(0,flash)+Math.max(0,cflash)*0.3;
+                    if(this.shieldActive) {
+                        ctx.beginPath(); ctx.arc(this.x,this.y,Math.max(this.width,this.height)*0.85,0,Math.PI*2);
+                        ctx.strokeStyle=`rgba(100,255,150,${0.7+Math.sin(Date.now()*0.015)*0.3})`; ctx.lineWidth=4;
+                        ctx.shadowColor='#22c55e'; ctx.shadowBlur=22; ctx.stroke(); ctx.shadowBlur=0; ctx.lineWidth=1;
+                    }
+                    if(this.buffTimer>0 && this.buffType) {
+                        const buffGlow = this.buffType==='rapid'?'#ffdd00':this.buffType==='triple'?'#00ff88':'#ff8800';
+                        ctx.beginPath(); ctx.arc(this.x,this.y,Math.max(this.width,this.height)*0.9,0,Math.PI*2);
+                        ctx.strokeStyle=buffGlow; ctx.lineWidth=2; ctx.shadowColor=buffGlow; ctx.shadowBlur=14;
+                        ctx.globalAlpha=0.5+Math.sin(Date.now()*0.02)*0.3; ctx.stroke(); ctx.shadowBlur=0; ctx.lineWidth=1; ctx.globalAlpha=1;
+                    }
+                    ctx.globalAlpha=Math.min(1.2,alpha);
+                    const w=this.width/2, h=this.height/2;
+                    ctx.beginPath();
+                    
+                    // Modificación visual de dirección en modo supervivencia
+                    if(isLandscape) { 
+                        const d = (gameMode === 'survival' || this.id === 1) ? 1 : -1; 
+                        ctx.moveTo(this.x+d*w,this.y); ctx.lineTo(this.x-d*w*0.6,this.y-h); ctx.lineTo(this.x-d*w*0.3,this.y); ctx.lineTo(this.x-d*w*0.6,this.y+h); 
+                    }
+                    else { 
+                        const d = (gameMode === 'survival') ? -1 : (this.id === 1 ? 1 : -1); 
+                        ctx.moveTo(this.x,this.y+d*h); ctx.lineTo(this.x-w,this.y-d*h*0.6); ctx.lineTo(this.x,this.y-d*h*0.3); ctx.lineTo(this.x+w,this.y-d*h*0.6); 
+                    }
+                    ctx.closePath();
+                    const grad=ctx.createLinearGradient(this.x-w,this.y-h,this.x+w,this.y+h); grad.addColorStop(0,this.color); grad.addColorStop(1,this.glowColor);
+                    ctx.fillStyle=grad; ctx.fill();
+                    ctx.strokeStyle=this.glowColor; ctx.lineWidth=2; ctx.shadowColor=this.glowColor; ctx.shadowBlur=14; ctx.stroke(); ctx.shadowBlur=0;
+                    
+                    // Propulsor
+                    ctx.beginPath(); 
+                    const propDir = isLandscape ? ((gameMode==='survival'||this.id===1)? -w*0.7 : w*0.7) : (gameMode==='survival' ? h*0.7 : (this.id===1? -h*0.7: h*0.7));
+                    if(isLandscape) ctx.arc(this.x+propDir,this.y,5+Math.sin(Date.now()*0.02)*2,0,Math.PI*2);
+                    else ctx.arc(this.x,this.y+propDir,5+Math.sin(Date.now()*0.02)*2,0,Math.PI*2);
+                    ctx.fillStyle='rgba(255,180,50,0.8)'; ctx.shadowBlur=15; ctx.fill();
+                    
+                    if(this.buffTimer>0) {
+                        const icon = this.buffType==='rapid'?'⚡':this.buffType==='triple'?'💥':'🛡';
+                        ctx.font='22px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom';
+                        ctx.fillStyle='#fff'; ctx.shadowBlur=12; ctx.fillText(icon, this.x, this.y - this.height/2 - 10);
+                        ctx.shadowBlur=0;
+                    }
+                    ctx.globalAlpha=1; ctx.restore();
+                }
+            }
+
+            class Projectile {
+                constructor(x,y,vx,vy,ownerId,color,isSniper=false) { this.x=x; this.y=y; this.vx=vx; this.vy=vy; this.ownerId=ownerId; this.color=color; this.radius=isSniper?6:4; this.alive=true; this.isSniper=isSniper; }
+                update(dt) { this.x+=this.vx*dt; this.y+=this.vy*dt; if(this.x<-60||this.x>canvasW+60||this.y<-60||this.y>canvasH+60) this.alive=false; }
+                draw(ctx) { ctx.beginPath(); ctx.arc(this.x,this.y,this.radius,0,Math.PI*2); const g=ctx.createRadialGradient(this.x,this.y,0,this.x,this.y,this.radius); g.addColorStop(0,'#ffffff'); g.addColorStop(0.4,this.color); g.addColorStop(1,'transparent'); ctx.fillStyle=g; ctx.shadowColor=this.color; ctx.shadowBlur=this.isSniper?18:10; ctx.fill(); ctx.shadowBlur=0; }
+            }
+// ENÉMIGOS EN MODO SUPERVIVENCIA (Estilo Chicken Invaders)
+            class Enemy {
+                constructor(type, wave) {
+                    this.type = type; // 'basic', 'fast', 'tank', 'boss'
+                    this.alive = true;
+                    this.phase = Math.random() * Math.PI * 2;
+                    
+                    if (type === 'basic') {
+                        this.hp = 1 + Math.floor(wave / 3);
+                        this.maxHp = this.hp;
+                        this.radius = 16;
+                        this.color = '#ff3c3c';
+                        this.scoreValue = 10;
+                        this.speed = 70 + Math.random() * 40;
+                        this.shootCooldown = 1.5 + Math.random() * 3;
+                    } else if (type === 'fast') {
+                        this.hp = 1;
+                        this.maxHp = this.hp;
+                        this.radius = 13;
+                        this.color = '#d946ef';
+                        this.scoreValue = 20;
+                        this.speed = 130 + Math.random() * 40;
+                        this.shootCooldown = 1.0 + Math.random() * 2;
+                    } else if (type === 'tank') {
+                        this.hp = 4 + Math.floor(wave / 2);
+                        this.maxHp = this.hp;
+                        this.radius = 25;
+                        this.color = '#eab308';
+                        this.scoreValue = 40;
+                        this.speed = 45 + Math.random() * 15;
+                        this.shootCooldown = 2.0 + Math.random() * 3;
+                    } else if (type === 'boss') {
+                        this.hp = 25 + wave * 15;
+                        this.maxHp = this.hp;
+                        this.radius = 48;
+                        this.color = '#ef4444';
+                        this.scoreValue = 250;
+                        this.speed = 35;
+                        this.shootCooldown = 1.0;
+                        this.isBoss = true;
+                    }
+
+                    if (isLandscape) {
+                        this.x = canvasW + this.radius + Math.random() * 80;
+                        this.y = canvasH * 0.15 + Math.random() * canvasH * 0.7;
+                        this.vx = -this.speed; this.vy = 0;
+                    } else {
+                        this.x = canvasW * 0.15 + Math.random() * canvasW * 0.7;
+                        this.y = -this.radius - Math.random() * 80;
+                        this.vx = 0; this.vy = this.speed;
+                    }
+                }
+                update(dt) {
+                    this.phase += dt * 2.5;
+                    if (isLandscape) {
+                        this.x += this.vx * dt;
+                        if(this.type==='fast' || this.type==='boss') this.y += Math.sin(this.phase) * 50 * dt;
+                        if (this.x < -this.radius * 2) this.alive = false;
+                    } else {
+                        this.y += this.vy * dt;
+                        if(this.type==='fast' || this.type==='boss') this.x += Math.sin(this.phase) * 50 * dt;
+                        if (this.y > canvasH + this.radius * 2) this.alive = false;
+                    }
+
+                    // Disparos automáticos
+                    this.shootCooldown -= dt;
+                    if (this.shootCooldown <= 0 && this.alive) {
+                        this.shoot();
+                        this.shootCooldown = this.type === 'boss' ? 0.7 + Math.random()*0.6 : 2.5 + Math.random()*3.5;
+                    }
+                }
+                shoot() {
+                    const spd = (isLandscape ? canvasW : canvasH) * 0.42;
+                    if (isLandscape) {
+                        if (this.type === 'boss') {
+                            enemyProjectiles.push(new EnemyProjectile(this.x, this.y, -spd, -70, this.color));
+                            enemyProjectiles.push(new EnemyProjectile(this.x, this.y, -spd, 0, this.color));
+                            enemyProjectiles.push(new EnemyProjectile(this.x, this.y, -spd, 70, this.color));
+                        } else {
+                            enemyProjectiles.push(new EnemyProjectile(this.x, this.y, -spd, 0, this.color));
+                        }
+                    } else {
+                        if (this.type === 'boss') {
+                            enemyProjectiles.push(new EnemyProjectile(this.x, this.y, -70, spd, this.color));
+                            enemyProjectiles.push(new EnemyProjectile(this.x, this.y, 0, spd, this.color));
+                            enemyProjectiles.push(new EnemyProjectile(this.x, this.y, 70, spd, this.color));
+                        } else {
+                            enemyProjectiles.push(new EnemyProjectile(this.x, this.y, 0, spd, this.color));
+                        }
+                    }
+                }
+                draw(ctx) {
+                    ctx.save();
+                    ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+                    const grad = ctx.createRadialGradient(this.x, this.y, this.radius*0.2, this.x, this.y, this.radius);
+                    grad.addColorStop(0, '#ffffff'); grad.addColorStop(0.5, this.color); grad.addColorStop(1, '#1a0005');
+                    ctx.fillStyle = grad; ctx.shadowColor = this.color; ctx.shadowBlur = this.type === 'boss' ? 30 : 12;
+                    ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+
+                    // Barra de Vida
+                    if (this.hp < this.maxHp) {
+                        const bw = this.radius * 1.5;
+                        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(this.x - bw/2, this.y - this.radius - 8, bw, 5);
+                        ctx.fillStyle = '#ff3c3c'; ctx.fillRect(this.x - bw/2, this.y - this.radius - 8, bw * (this.hp/this.maxHp), 5);
+                    }
+                    ctx.restore();
+                }
+            }
+
+            class EnemyProjectile {
+                constructor(x,y,vx,vy,color) { this.x=x; this.y=y; this.vx=vx; this.vy=vy; this.color=color; this.radius=4.5; this.alive=true; }
+                update(dt) { this.x+=this.vx*dt; this.y+=this.vy*dt; if(this.x<-30||this.x>canvasW+30||this.y<-30||this.y>canvasH+30) this.alive=false; }
+                draw(ctx) { ctx.beginPath(); ctx.arc(this.x,this.y,this.radius,0,Math.PI*2); ctx.fillStyle='#ffffff'; ctx.shadowColor=this.color; ctx.shadowBlur=10; ctx.fill(); ctx.strokeStyle=this.color; ctx.stroke(); ctx.shadowBlur=0; }
+            }
+
+            class Particle {
+                constructor(x,y,vx,vy,color,life) { this.x=x; this.y=y; this.vx=vx; this.vy=vy; this.color=color; this.life=life; this.maxLife=life; }
+                update(dt) { this.x+=this.vx*dt; this.y+=this.vy*dt; this.life-=dt; this.vx*=0.94; this.vy*=0.94; }
+                get alive() { return this.life>0; }
+                draw(ctx) { const a=this.life/this.maxLife; ctx.beginPath(); ctx.arc(this.x,this.y,(2+Math.random()*2.5)*a,0,Math.PI*2); ctx.fillStyle=this.color.replace('1)',`${a})`).replace('rgb','rgba'); ctx.fill(); }
+            }
+
+            class PowerUp {
+                constructor(x,y,type) { this.x=x; this.y=y; this.type=type; this.radius=22; this.life=9; this.pulse=0; this.collected=false; this.collectTimer=0; }
+                get color() { return {'rapid':'#ffdd00','triple':'#00ff88','shield':'#ff8800'}[this.type]||'#fff'; }
+                get icon() { return {'rapid':'⚡','triple':'💥','shield':'🛡'}[this.type]||'?'; }
+                get label() { return {'rapid':'RÁPIDO','triple':'TRIPLE','shield':'ESCUDO'}[this.type]||''; }
+                update(dt) { if(!this.collected) this.life-=dt; else this.collectTimer+=dt; this.pulse+=dt*4; }
+                get alive() { return (this.life>0 && !this.collected) || (this.collected && this.collectTimer<0.5); }
+                draw(ctx) {
+                    if(this.collected) {
+                        const a2=1-this.collectTimer/0.5; const r2=this.radius*(1+this.collectTimer*6);
+                        ctx.beginPath(); ctx.arc(this.x,this.y,r2,0,Math.PI*2);
+                        ctx.strokeStyle=this.color.replace('1)',`${a2})`).replace('rgb','rgba'); ctx.lineWidth=4; ctx.stroke();
+                        return;
+                    }
+                    const s=1+Math.sin(this.pulse)*0.25, a=Math.min(1,this.life*1.5), r=this.radius*s;
+                    ctx.beginPath(); ctx.arc(this.x,this.y,r*1.8,0,Math.PI*2); const gg=ctx.createRadialGradient(this.x,this.y,r*0.3,this.x,this.y,r*1.8); gg.addColorStop(0,this.color+'cc'); gg.addColorStop(1,'transparent'); ctx.fillStyle=gg; ctx.fill();
+                    ctx.beginPath(); ctx.arc(this.x,this.y,r,0,Math.PI*2); const g=ctx.createRadialGradient(this.x,this.y,0,this.x,this.y,r); g.addColorStop(0,'#ffffff'); g.addColorStop(0.45,this.color); g.addColorStop(1,this.color+'44'); ctx.fillStyle=g; ctx.globalAlpha=a; ctx.fill(); ctx.globalAlpha=1;
+                    ctx.fillStyle='#000'; ctx.font=`bold ${r*1.0}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(this.icon,this.x,this.y);
+                }
+            }
+
+            class Obstacle {
+                constructor(x,y,radius) { this.x=x; this.y=y; this.radius=radius; this.life=11+Math.random()*9; }
+                update(dt) { this.life-=dt; }
+                get alive() { return this.life>0; }
+                draw(ctx) { const a=Math.min(0.65,this.life*0.12); ctx.beginPath(); ctx.arc(this.x,this.y,this.radius,0,Math.PI*2); const g=ctx.createRadialGradient(this.x,this.y,this.radius*0.25,this.x,this.y,this.radius); g.addColorStop(0,'#555577'); g.addColorStop(0.7,'#222244'); g.addColorStop(1,'#111122'); ctx.fillStyle=g; ctx.globalAlpha=a; ctx.fill(); ctx.strokeStyle='#8888aa'; ctx.lineWidth=2.5; ctx.stroke(); ctx.globalAlpha=1; }
+            }
+// ────────────────────────────────────────
+            // INICIALIZACIÓN
+            // ────────────────────────────────────────
+            function createStars() { stars=[]; const c=Math.floor((canvasW*canvasH)/2400); for(let i=0;i<c;i++) stars.push({x:Math.random()*canvasW,y:Math.random()*canvasH,r:Math.random()*1.8+0.2,twinkle:Math.random()*Math.PI*2,twinkleSpeed:0.35+Math.random()*2.5,baseAlpha:0.2+Math.random()*0.7}); }
+            
+            function setupPlayers() {
+                const d1=SHIP_DEFS[equippedShipP1]||SHIP_DEFS['basic'], d2=SHIP_DEFS[equippedShipP2]||SHIP_DEFS['basic'];
+                
+                if (gameMode === 'survival') {
+                    // Modo Supervivencia: Ambos en el mismo lado
+                    if (isLandscape) {
+                        player1 = new Player(1, canvasW * 0.08, canvasH * 0.35, d1);
+                        player2 = new Player(2, canvasW * 0.08, canvasH * 0.65, d2);
+                    } else {
+                        player1 = new Player(1, canvasW * 0.35, canvasH * 0.88, d1);
+                        player2 = new Player(2, canvasW * 0.65, canvasH * 0.88, d2);
+                    }
+                    survivalWave = 1;
+                    survivalScore = 0;
+                    enemiesToSpawn = 7;
+                    bossSpawned = false;
+                    enemies = []; enemyProjectiles = [];
+                    waveSpawnTimer = performance.now() + 1500;
+                } else {
+                    // Modo PvP Original
+                    if(isLandscape) { player1=new Player(1,canvasW*0.07,canvasH/2,d1); player2=new Player(2,canvasW*0.93,canvasH/2,d2); }
+                    else { player1=new Player(1,canvasW/2,canvasH*0.07,d1); player2=new Player(2,canvasW/2,canvasH*0.93,d2); }
+                }
+
+                player1.reset(); player2.reset(); 
+                projectiles=[]; particles=[]; powerUps=[]; obstacles=[]; floatingTexts=[];
+                powerUpTimer=performance.now()+2500; obstacleTimer=performance.now()+4000; shakeAmount=0; winnerPlayer=null; gameOverTimer=0;
+            }
+
+            function resizeCanvas() {
+                const w=window.innerWidth,h=window.innerHeight; isLandscape=w>h;
+                rotateMsg.style.display=(!isLandscape&&gameState==='playing')?'flex':'none';
+                const dpr=Math.min(window.devicePixelRatio||1,2); canvasW=w; canvasH=h;
+                canvas.width=canvasW*dpr; canvas.height=canvasH*dpr; canvas.style.width=canvasW+'px'; canvas.style.height=canvasH+'px';
+                ctx.setTransform(1,0,0,1,0,0); ctx.scale(dpr,dpr); createStars();
+                if(player1&&player2&&gameState==='playing') setupPlayers();
+            }
+
+            // ────────────────────────────────────────
+            // UI
+            // ────────────────────────────────────────
+            function clearUI() { uiOverlay.innerHTML=''; }
+            function showMenu() {
+                clearUI(); const p=document.createElement('div'); p.className='menu-panel';
+                p.innerHTML=`<h2>⚔️ DUELO ESPACIAL</h2>
+                    <div style="display:flex;gap:24px;"><div><span style="color:#00d4ff;">J1</span> <span class="currency-display">🪙${currencyP1}</span></div><div><span style="color:#ff3860;">J2</span> <span class="currency-display">🪙${currencyP2}</span></div></div>
+                    <button class="btn primary" id="btnPvP">⚔️ DUELO 1V1</button>
+                    <button class="btn survival" id="btnSurvival">👾 SUPERVIVENCIA</button>
+                    <button class="btn" id="btnShop">🛒 TIENDA</button>
+                    <div style="font-size:0.7rem;opacity:0.6;">Mantén pulsado para disparar • Cooperativo en Supervivencia</div>`;
+                uiOverlay.appendChild(p);
+                
+                document.getElementById('btnPvP').addEventListener('click',()=>{ initAudio(); gameMode='pvp'; gameState='select'; showShipSelect(); });
+                document.getElementById('btnSurvival').addEventListener('click',()=>{ initAudio(); gameMode='survival'; gameState='select'; showShipSelect(); });
+                document.getElementById('btnShop').addEventListener('click',()=>{ initAudio(); gameState='shop'; showShop(); });
+            }
+            function showShipSelect() {
+                clearUI(); const p=document.createElement('div'); p.className='menu-panel';
+                p.innerHTML=`<h3>J1 - Nave</h3><div class="ship-select" id="p1Ships"></div><h3 style="margin-top:8px;">J2 - Nave</h3><div class="ship-select" id="p2Ships"></div><button class="btn primary" id="btnStart">⚡ EMPEZAR</button><button class="btn small" id="btnBack">Volver</button>`;
+                uiOverlay.appendChild(p);
+                function renderCards(cid,pn) {
+                    const c=document.getElementById(cid); const eq=pn===1?equippedShipP1:equippedShipP2; const unl=pn===1?unlockedShipsP1:unlockedShipsP2;
+                    c.innerHTML='';
+                    for(const [key,def] of Object.entries(SHIP_DEFS)) {
+                        const card=document.createElement('div'); card.className='ship-card';
+                        if(!unl.has(key)) card.classList.add('locked'); if(eq===key&&unl.has(key)) card.classList.add('selected');
+                        card.innerHTML=`<div class="ship-preview" style="background:${def.color};box-shadow:0 0 10px ${def.glow};"></div><div style="font-size:0.7rem;font-weight:600;">${def.name}</div>${!unl.has(key)?`<div style="font-size:0.6rem;color:#ffd700;">🪙${def.price}</div>`:''}`;
+                        card.addEventListener('click',()=>{
+                            if(!unl.has(key)) { const cur=pn===1?currencyP1:currencyP2; if(cur>=def.price) { if(pn===1){currencyP1-=def.price;unlockedShipsP1.add(key);}else{currencyP2-=def.price;unlockedShipsP2.add(key);} saveData(); sfxBuy(); renderCards(cid,pn); if(pn===1)equippedShipP1=key;else equippedShipP2=key; saveData(); renderCards(cid,pn); } else vibrate(50); }
+                            else { if(pn===1)equippedShipP1=key;else equippedShipP2=key; saveData(); renderCards(cid,pn); }
+                        }); c.appendChild(card);
+                    }
+                }
+                renderCards('p1Ships',1); renderCards('p2Ships',2);
+                document.getElementById('btnStart').addEventListener('click',()=>{ if(!unlockedShipsP1.has(equippedShipP1)||!unlockedShipsP2.has(equippedShipP2)) return; clearUI(); gameState='playing'; setupPlayers(); });
+                document.getElementById('btnBack').addEventListener('click',()=>{ gameState='menu'; showMenu(); });
+            }
+            function showShop() {
+                clearUI(); const p=document.createElement('div'); p.className='menu-panel';
+                p.innerHTML=`<h3>🛒 Tienda</h3><div style="display:flex;gap:20px;"><span style="color:#00d4ff;">J1 🪙${currencyP1}</span><span style="color:#ff3860;">J2 🪙${currencyP2}</span></div><div id="shopList" style="width:100%;max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;"></div><button class="btn small" id="btnShopBack">Volver</button>`;
+                uiOverlay.appendChild(p); const sl=document.getElementById('shopList');
+                for(const [key,def] of Object.entries(SHIP_DEFS)) { if(key==='basic') continue;
+                    const row=document.createElement('div'); row.style.cssText='display:flex;align-items:center;justify-content:space-between;background:rgba(255,255,255,0.05);border-radius:12px;padding:8px 12px;';
+                    const u1=unlockedShipsP1.has(key), u2=unlockedShipsP2.has(key);
+                    row.innerHTML=`<div style="display:flex;align-items:center;gap:8px;"><div style="width:22px;height:16px;background:${def.color};border-radius:4px;box-shadow:0 0 8px ${def.glow};"></div><div><div style="font-weight:600;font-size:0.85rem;">${def.name}</div><div style="font-size:0.65rem;opacity:0.7;">${def.desc}</div></div></div><div style="display:flex;gap:6px;"><button class="btn small buy-btn" data-player="1" data-ship="${key}" ${u1?'disabled':''}>J1 ${u1?'✅':'🪙'+def.price}</button><button class="btn small buy-btn" data-player="2" data-ship="${key}" ${u2?'disabled':''}>J2 ${u2?'✅':'🪙'+def.price}</button></div>`;
+                    sl.appendChild(row); }
+                sl.addEventListener('click',(e)=>{ if(!e.target.classList.contains('buy-btn')) return; const btn=e.target; const player=parseInt(btn.dataset.player); const ship=btn.dataset.ship; const def=SHIP_DEFS[ship]; const cur=player===1?currencyP1:currencyP2; const unl=player===1?unlockedShipsP1:unlockedShipsP2; if(unl.has(ship)) return; if(cur>=def.price){ if(player===1){currencyP1-=def.price;unlockedShipsP1.add(ship);}else{currencyP2-=def.price;unlockedShipsP2.add(ship);} saveData(); sfxBuy(); showShop(); } else vibrate(40); });
+                document.getElementById('btnShopBack').addEventListener('click',()=>{ gameState='menu'; showMenu(); });
+            }
+            function showGameOver() {
+                clearUI(); const p=document.createElement('div'); p.className='menu-panel';
+                if(gameMode === 'survival') {
+                    p.innerHTML=`<h2>👾 FIN DE INVASIÓN</h2>
+                        <div style="font-size:1.1rem;color:#ff3c3c;font-weight:bold;">¡Oleadas Superadas: ${survivalWave}!</div>
+                        <div class="currency-display">Puntuación: ${survivalScore}</div>
+                        <button class="btn primary" id="btnContinue">Continuar</button>`;
+                } else {
+                    if(!winnerPlayer) return;
+                    p.innerHTML=`<h2 style="color:${winnerPlayer.id===1?'#00d4ff':'#ff3860'};">¡J${winnerPlayer.id} Gana!</h2><div class="currency-display">+🪙100</div><button class="btn primary" id="btnContinue">Continuar</button>`;
+                }
+                uiOverlay.appendChild(p); document.getElementById('btnContinue').addEventListener('click',()=>{ clearUI(); gameState='menu'; showMenu(); });
+            }
+ // ────────────────────────────────────────
+            // ENTRADA TÁCTIL
+            // ────────────────────────────────────────
+            function getTouchSide(tx,ty) { return isLandscape?(tx<canvasW/2?'left':'right'):(ty<canvasH/2?'top':'bottom'); }
+            canvas.addEventListener('touchstart',(e)=>{ e.preventDefault(); initAudio(); if(gameState==='playing'){ for(const t of e.changedTouches){ const side=getTouchSide(t.clientX,t.clientY); activeTouches[t.identifier]={x:t.clientX,y:t.clientY,side}; const tg=(side==='left'||side==='top')?player1:player2; if(tg) tg.isTouching=true; if(tg&&isLandscape) tg.targetY=Math.max(tg.height/2,Math.min(canvasH-tg.height/2,t.clientY)); if(tg&&!isLandscape) tg.targetX=Math.max(tg.width/2,Math.min(canvasW-tg.width/2,t.clientX)); } } },{passive:false});
+            canvas.addEventListener('touchmove',(e)=>{ e.preventDefault(); if(gameState!=='playing') return; for(const t of e.changedTouches){ if(activeTouches[t.identifier]){ activeTouches[t.identifier].x=t.clientX; activeTouches[t.identifier].y=t.clientY; const side=activeTouches[t.identifier].side; const tg=(side==='left'||side==='top')?player1:player2; if(tg&&isLandscape) tg.targetY=Math.max(tg.height/2,Math.min(canvasH-tg.height/2,t.clientY)); if(tg&&!isLandscape) tg.targetX=Math.max(tg.width/2,Math.min(canvasW-tg.width/2,t.clientX)); } } },{passive:false});
+            canvas.addEventListener('touchend',(e)=>{ e.preventDefault(); for(const t of e.changedTouches){ if(activeTouches[t.identifier]){ const side=activeTouches[t.identifier].side; const tg=(side==='left'||side==='top')?player1:player2; if(tg) tg.isTouching=false; delete activeTouches[t.identifier]; } } for(const p of [player1,player2]){ if(!p) continue; const side=p.id===1?(isLandscape?'left':'top'):(isLandscape?'right':'bottom'); if(!Object.values(activeTouches).some(t=>t.side===side)) p.isTouching=false; } },{passive:false});
+
+            // ────────────────────────────────────────
+            // LÓGICA DEL JUEGO
+            // ────────────────────────────────────────
+            function spawnPowerUp() { const types=['rapid','triple','shield']; const type=types[Math.floor(Math.random()*types.length)]; let px,py,attempts=0; do { if(isLandscape){px=canvasW*0.25+Math.random()*canvasW*0.5;py=canvasH*0.12+Math.random()*canvasH*0.76;} else {px=canvasW*0.12+Math.random()*canvasW*0.76;py=canvasH*0.25+Math.random()*canvasH*0.5;} attempts++; } while(attempts<15 && obstacles.some(o=>Math.hypot(px-o.x,py-o.y)<o.radius+35)); powerUps.push(new PowerUp(px,py,type)); }
+            function spawnObstacle() { let ox,oy,r; r=30+Math.random()*50; if(isLandscape){ox=canvasW*0.32+Math.random()*canvasW*0.36;oy=canvasH*0.08+Math.random()*canvasH*0.84;} else {ox=canvasW*0.08+Math.random()*canvasW*0.84;oy=canvasH*0.32+Math.random()*canvasH*0.36;} obstacles.push(new Obstacle(ox,oy,r)); }
+            function spawnExplosion(x,y,color,count=18) { cinematicFlash = 0.15; for(let i=0;i<count;i++){ const a=Math.random()*Math.PI*2,s=90+Math.random()*500; particles.push(new Particle(x,y,Math.cos(a)*s,Math.sin(a)*s,color,0.35+Math.random()*0.8)); } }
+
+            function playerShoot(player) {
+                if(gameMode === 'survival') { if(player.lives <= 0) return; } else { if(!player.alive) return; }
+                if(!player.isTouching) return;
+                const now=performance.now(); if(now-player.shootCooldown<player.getShootCooldown()) return;
+                player.shootCooldown=now;
+                const color=player.color; const speed=(isLandscape?canvasW:canvasH)*0.78;
+                const count=player.getProjectileCount(); const isSniper=player.shipDef.id==='sniper';
+                const offsets=count===3?[-13,0,13]:[0];
+                
+                for(const off of offsets){ 
+                    let px,py,vx,vy; 
+                    if(gameMode === 'survival') {
+                        // Ambos jugadores disparan hacia el frente/arriba contra la invasión
+                        if(isLandscape) { px=player.x+player.width/2; py=player.y+off; vx=speed; vy=0; }
+                        else { px=player.x+off; py=player.y-player.height/2; vx=0; vy=-speed; }
+                    } else {
+                        // PvP original enfrentados
+                        if(isLandscape){ px=player.x+(player.id===1?player.width/2:-player.width/2); py=player.y+off; vx=(player.id===1?1:-1)*speed; vy=0;} 
+                        else { px=player.x+off; py=player.y+(player.id===1?player.height/2:-player.height/2); vx=0; vy=(player.id===1?1:-1)*speed; }
+                    }
+                    projectiles.push(new Projectile(px,py,vx,vy,player.id,color,isSniper)); 
+                }
+                sfxShoot();
+            }
+
+            function update(dt) {
+                if(gameState!=='playing'){ if(gameState==='gameover'){gameOverTimer+=dt; if(gameOverTimer>1.6&&!document.querySelector('.menu-panel')) showGameOver(); } return; }
+                const cappedDt=Math.min(dt,0.1); if(cinematicFlash>0) cinematicFlash-=cappedDt;
+                
+                for(const p of [player1,player2]) { if(p.hitFlash>0) p.hitFlash-=cappedDt; p.updateBuff(cappedDt); }
+                
+                // Movimiento y fijación de eje cooperativo
+                for(const p of [player1,player2]) {
+                    if (gameMode === 'survival' && p.lives <= 0) continue;
+                    const spd=(isLandscape?canvasH:canvasW)*p.getSpeed()*cappedDt;
+                    if(isLandscape){ 
+                        const diff=p.targetY-p.y; if(Math.abs(diff)<spd) p.y=p.targetY; else p.y+=Math.sign(diff)*spd; 
+                        p.y=Math.max(p.height/2,Math.min(canvasH-p.height/2,p.y));
+                        if(gameMode === 'survival') p.x = p.id === 1 ? canvasW * 0.07 : canvasW * 0.14;
+                    } else { 
+                        const diff=p.targetX-p.x; if(Math.abs(diff)<spd) p.x=p.targetX; else p.x+=Math.sign(diff)*spd; 
+                        p.x=Math.max(p.width/2,Math.min(canvasW-p.width/2,p.x));
+                        if(gameMode === 'survival') p.y = p.id === 1 ? canvasH * 0.86 : canvasH * 0.93;
+                    }
+                }
+
+                playerShoot(player1); playerShoot(player2);
+                for(const proj of projectiles) proj.update(cappedDt);
+
+                // ────────────────────────────────────────
+                // GESTIÓN DE OLEADAS (MODO SUPERVIVENCIA)
+                // ────────────────────────────────────────
+                if (gameMode === 'survival') {
+                    const nowMs = performance.now();
+                    
+                    // Spawn progresivo de enemigos comunes
+                    if (nowMs > waveSpawnTimer && enemiesToSpawn > 0) {
+                        let type = 'basic'; const rand = Math.random();
+                        if (survivalWave >= 4 && rand < 0.28) type = 'tank';
+                        else if (survivalWave >= 2 && rand < 0.42) type = 'fast';
+                        
+                        enemies.push(new Enemy(type, survivalWave));
+                        enemiesToSpawn--;
+                        waveSpawnTimer = nowMs + 900 + Math.random() * 1100;
+                    }
+
+                    // Aparición del Jefe (Cada 3 Oleadas)
+                    if (enemiesToSpawn === 0 && enemies.length === 0 && survivalWave % 3 === 0 && !bossSpawned) {
+                        enemies.push(new Enemy('boss', survivalWave));
+                        bossSpawned = true;
+                        floatingTexts.push(new FloatingText(canvasW/2, canvasH/2 - 40, "⚠️ ¡ALERTA DE JEFE ENTRANTE! ⚠️", "#ff1e56", 2.2));
+                    }
+
+                    // Limpieza de oleada e inicio de la siguiente
+                    if (enemiesToSpawn === 0 && enemies.length === 0 && (survivalWave % 3 !== 0 || bossSpawned)) {
+                        survivalWave++;
+                        enemiesToSpawn = 5 + survivalWave * 2;
+                        bossSpawned = false;
+                        currencyP1 += 50; currencyP2 += 50; saveData();
+                        floatingTexts.push(new FloatingText(canvasW/2, canvasH/2, `¡OLEADA ${survivalWave}!`, "#00ff88", 2.0));
+                        sfxWin(); waveSpawnTimer = nowMs + 2500;
+                    }
+
+                    // Actualizar enemigos y sus proyectiles
+                    for (const e of enemies) e.update(cappedDt);
+                    enemies = enemies.filter(e => e.alive);
+                    for (const ep of enemyProjectiles) ep.update(cappedDt);
+                    enemyProjectiles = enemyProjectiles.filter(ep => ep.alive);
+
+                    // Colisión: Proyectiles Jugadores -> Enemigos
+                    for (const proj of projectiles) {
+                        if (!proj.alive) continue;
+                        for (const e of enemies) {
+                            if (!e.alive) continue;
+                            if (Math.hypot(proj.x - e.x, proj.y - e.y) < e.radius + proj.radius) {
+                                proj.alive = false;
+                                e.hp -= proj.isSniper ? 3 : 1;
+                                spawnExplosion(proj.x, proj.y, proj.color, 4);
+                                if (e.hp <= 0) {
+                                    e.alive = false;
+                                    spawnExplosion(e.x, e.y, e.color, e.isBoss ? 45 : 16);
+                                    survivalScore += e.scoreValue;
+                                    if(proj.ownerId === 1) currencyP1 += Math.ceil(e.scoreValue/4);
+                                    else currencyP2 += Math.ceil(e.scoreValue/4);
+                                    saveData(); shakeAmount = e.isBoss ? 16 : 6; sfxHit();
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    // Colisión: Proyectiles Enemigos -> Jugadores
+                    for (const ep of enemyProjectiles) {
+                        if (!ep.alive) continue;
+                        for (const p of [player1, player2]) {
+                            if (p.lives <= 0) continue;
+                            if (Math.hypot(ep.x - p.x, ep.y - p.y) < Math.max(p.width, p.height)*0.5 + ep.radius) {
+                                ep.alive = false;
+                                if (p.handleHit()) {
+                                    p.lives--; spawnExplosion(p.x, p.y, p.color, 20);
+                                    shakeAmount = 10; sfxHit(); vibrate([40,40]);
+                                    if (player1.lives <= 0 && player2.lives <= 0) { gameState = 'gameover'; gameOverTimer = 0; }
+                                }
+                            }
+                        }
+                    }
+
+                    // Colisión: Cuerpo de Enemigos -> Jugadores
+                    for (const e of enemies) {
+                        if (!e.alive) continue;
+                        for (const p of [player1, player2]) {
+                            if (p.lives <= 0) continue;
+                            if (Math.hypot(e.x - p.x, e.y - p.y) < Math.max(p.width, p.height)*0.5 + e.radius) {
+                                if(!e.isBoss) e.alive = false;
+                                if (p.handleHit()) {
+                                    p.lives--; spawnExplosion(p.x, p.y, p.color, 25);
+                                    shakeAmount = 14; sfxHit();
+                                    if (player1.lives <= 0 && player2.lives <= 0) { gameState = 'gameover'; gameOverTimer = 0; }
+                                }
+                            }
+                        }
+                    }
+
+                } else {
+                // ────────────────────────────────────────
+                    // MODO PVP ORIGINAL
+                    // ────────────────────────────────────────
+                    for (const proj of projectiles) { if(!proj.alive) continue; const target=proj.ownerId===1?player2:player1; if(Math.hypot(proj.x-target.x,proj.y-target.y)<Math.max(target.width,target.height)*0.55+proj.radius){ proj.alive=false; const hitReal=target.handleHit(); if(hitReal){ const attacker=proj.ownerId===1?player1:player2; attacker.score++; spawnExplosion(proj.x,proj.y,proj.color,22); shakeAmount=8; cameraZoom=1.06; sfxHit(); vibrate([30,50,30]); if(attacker.score>=10){ gameState='gameover'; winnerPlayer=attacker; gameOverTimer=0; sfxWin(); vibrate([100,80,100,80,200]); if(attacker.id===1) currencyP1+=100; else currencyP2+=100; saveData(); } } else { spawnExplosion(proj.x,proj.y,'rgb(100,255,150)',5); vibrate(12); } } }
+                }
+
+                // Colisiones generales con obstáculos estáticos
+                for (const proj of projectiles) { if(!proj.alive) continue; for(const obs of obstacles){ if(Math.hypot(proj.x-obs.x,proj.y-obs.y)<obs.radius+proj.radius){ proj.alive=false; spawnExplosion(proj.x,proj.y,'#ffffff',4); break; } } }
+                projectiles=projectiles.filter(p=>p.alive);
+                for(const p of particles) p.update(cappedDt); particles=particles.filter(p=>p.alive);
+                for(const ft of floatingTexts) ft.update(cappedDt); floatingTexts=floatingTexts.filter(f=>f.alive);
+
+                const now=performance.now();
+                if(now>powerUpTimer && powerUps.filter(p=>p.alive&&!p.collected).length<2) { spawnPowerUp(); powerUpTimer=now+5000+Math.random()*7000; }
+                for(const pu of powerUps) pu.update(cappedDt);
+                
+                // Activación de Power-Ups por impacto
+                for (const pu of powerUps) {
+                    if (!pu.alive || pu.collected) continue;
+                    for (const proj of projectiles) {
+                        if (!proj.alive) continue;
+                        if (Math.hypot(pu.x - proj.x, pu.y - proj.y) < pu.radius + proj.radius) {
+                            const player = proj.ownerId === 1 ? player1 : player2;
+                            player.applyBuff(pu.type);
+                            pu.collected = true; pu.life = 0; proj.alive = false;
+                            spawnExplosion(pu.x, pu.y, pu.color, 20);
+                            floatingTexts.push(new FloatingText(pu.x, pu.y - 20, `J${player.id} ${pu.label}!`, pu.color, 1.2));
+                            sfxPowerUp(); vibrate(35); break;
+                        }
+                    }
+                }
+                powerUps=powerUps.filter(p=>p.alive);
+
+                if(now>obstacleTimer && obstacles.length<3) { spawnObstacle(); obstacleTimer=now+7000+Math.random()*9000; }
+                for(const obs of obstacles) obs.update(cappedDt); obstacles=obstacles.filter(o=>o.alive);
+                if(shakeAmount>0) shakeAmount*=Math.exp(-cappedDt*7); if(shakeAmount<0.04) shakeAmount=0; cameraZoom += (1-cameraZoom)*cappedDt*4;
+            }
+
+            // ────────────────────────────────────────
+            // RENDERIZADO
+            // ────────────────────────────────────────
+            function drawBackground() {
+                const bg=ctx.createRadialGradient(canvasW/2,canvasH/2,0,canvasW/2,canvasH/2,Math.max(canvasW,canvasH)*0.7); bg.addColorStop(0,'#0d0d2b'); bg.addColorStop(1,'#06060f'); ctx.fillStyle=bg; ctx.fillRect(0,0,canvasW,canvasH);
+                const t=Date.now()*0.001; for(const s of stars){ const a=s.baseAlpha+Math.sin(t*s.twinkleSpeed+s.twinkle)*0.3; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fillStyle=`rgba(255,255,255,${Math.max(0.06,a)})`; ctx.fill(); }
+                
+                // Línea divisoria central sólo en modo PvP
+                if (gameMode === 'pvp') {
+                    ctx.strokeStyle='rgba(255,255,255,0.04)'; ctx.lineWidth=1; ctx.setLineDash([8,18]); ctx.beginPath(); if(isLandscape){ctx.moveTo(canvasW/2,0);ctx.lineTo(canvasW/2,canvasH);}else{ctx.moveTo(0,canvasH/2);ctx.lineTo(canvasW,canvasH/2);} ctx.stroke(); ctx.setLineDash([]);
+                }
+            }
+            
+            function drawUI() {
+                const fs=Math.min(canvasW,canvasH)*0.052; ctx.font=`bold ${fs}px 'Segoe UI',sans-serif`; ctx.textBaseline='top';
+                
+                if (gameMode === 'survival') {
+                    // UI Supervivencia
+                    ctx.textAlign='left'; ctx.fillStyle=player1.color; ctx.shadowColor=player1.glowColor; ctx.shadowBlur=10;
+                    ctx.fillText(`J1 Vidas: ${player1.lives > 0 ? '❤️'.repeat(player1.lives) : '💀'}`, 25, 20);
+                    
+                    ctx.textAlign='right'; ctx.fillStyle=player2.color; ctx.shadowColor=player2.glowColor;
+                    ctx.fillText(`J2 Vidas: ${player2.lives > 0 ? '❤️'.repeat(player2.lives) : '💀'}`, canvasW - 25, 20);
+                    
+                    ctx.textAlign='center'; ctx.fillStyle='#ffffff'; ctx.shadowColor='#a855f7';
+                    ctx.fillText(`OLEADA: ${survivalWave}  |  PTS: ${survivalScore}`, canvasW/2, isLandscape? 20 : 65);
+                } else {
+                    // UI PvP Tradicional
+                    ctx.textAlign='center'; ctx.fillStyle=player1.color; ctx.shadowColor=player1.glowColor; ctx.shadowBlur=10; ctx.fillText(`J1: ${player1.score}`,isLandscape?canvasW*0.2:canvasW/2,isLandscape?20:26);
+                    ctx.fillStyle=player2.color; ctx.shadowColor=player2.glowColor; ctx.fillText(`J2: ${player2.score}`,isLandscape?canvasW*0.8:canvasW/2,isLandscape?20:canvasH-26-fs);
+                    ctx.fillStyle='rgba(255,255,255,0.12)'; ctx.fillRect(canvasW*0.1,70,canvasW*0.3,10); ctx.fillRect(canvasW*0.6,70,canvasW*0.3,10);
+                    ctx.fillStyle=player1.color; ctx.fillRect(canvasW*0.1,70,(player1.score/10)*(canvasW*0.3),10);
+                    ctx.fillStyle=player2.color; ctx.fillRect(canvasW*0.6,70,(player2.score/10)*(canvasW*0.3),10);
+                }
+                ctx.shadowBlur=0;
+            }
+            
+            function render() {
+                ctx.clearRect(0,0,canvasW,canvasH); let sx=0,sy=0; if(shakeAmount>0.08){sx=(Math.random()-0.5)*shakeAmount*2;sy=(Math.random()-0.5)*shakeAmount*2;} ctx.save(); ctx.translate(canvasW/2,canvasH/2); ctx.scale(cameraZoom,cameraZoom); ctx.translate(-canvasW/2+sx,-canvasH/2+sy);
+                const neb=ctx.createRadialGradient(canvasW*0.5,canvasH*0.5,0,canvasW*0.5,canvasH*0.5,canvasW*0.7); neb.addColorStop(0,'rgba(120,40,255,0.12)'); neb.addColorStop(0.5,'rgba(0,180,255,0.08)'); neb.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=neb; ctx.fillRect(0,0,canvasW,canvasH);
+                
+                drawBackground(); 
+                for(const o of obstacles) o.draw(ctx); 
+                for(const pu of powerUps) pu.draw(ctx); 
+                for(const p of particles) p.draw(ctx); 
+                for(const pr of projectiles) pr.draw(ctx);
+                
+                if (gameMode === 'survival') {
+                    for(const e of enemies) e.draw(ctx);
+                    for(const ep of enemyProjectiles) ep.draw(ctx);
+                }
+                
+                if(player1 && (gameMode !== 'survival' || player1.lives > 0)) player1.draw(ctx,isLandscape); 
+                if(player2 && (gameMode !== 'survival' || player2.lives > 0)) player2.draw(ctx,isLandscape);
+                for(const ft of floatingTexts) ft.draw(ctx);
+                ctx.restore();
+                
+                if(gameState==='playing'&&player1&&player2) drawUI();
+                if(cinematicFlash>0){ ctx.fillStyle=`rgba(255,255,255,${cinematicFlash})`; ctx.fillRect(0,0,canvasW,canvasH); }
+                
+                if(gameState==='gameover') { 
+                    drawUI(); ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,canvasW,canvasH); 
+                    const fs=Math.min(canvasW,canvasH)*0.08; ctx.font=`bold ${fs}px 'Segoe UI',sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; 
+                    if(gameMode === 'survival') {
+                        ctx.fillStyle='#ff3c3c'; ctx.shadowBlur=25; ctx.fillText(`INVASIÓN COMPLETADA`,canvasW/2,canvasH/2);
+                    } else if(winnerPlayer) {
+                        ctx.fillStyle=winnerPlayer.id===1?'#00d4ff':'#ff3860'; ctx.shadowBlur=25; ctx.fillText(`¡J${winnerPlayer.id} Gana!`,canvasW/2,canvasH/2);
+                    }
+                    ctx.shadowBlur=0; 
+                }
+            }
+
+            let lastTime=performance.now();
+            function gameLoop(ts) { let dt=(ts-lastTime)/1000; if(dt<=0) dt=0.016; if(dt>0.2) dt=0.2; lastTime=ts; const w=window.innerWidth,h=window.innerHeight; if((w>h)!==isLandscape){ isLandscape=w>h; resizeCanvas(); if(gameState==='playing') setupPlayers(); } update(dt); render(); requestAnimationFrame(gameLoop); }
+            function init() { loadData(); resizeCanvas(); gameState='menu'; showMenu(); lastTime=performance.now(); requestAnimationFrame(gameLoop); }
+            window.addEventListener('resize',()=>{ resizeCanvas(); if(gameState==='playing') setupPlayers(); });
+            document.addEventListener('gesturestart',e=>e.preventDefault()); document.addEventListener('gesturechange',e=>e.preventDefault()); document.addEventListener('gestureend',e=>e.preventDefault());
+            init();
+            console.log('🚀 Duelo Espacial V2 | Modos PvP y Supervivencia Chicken Invaders Integrados');
+        })();
+    </script>
+</body>
+</html>
